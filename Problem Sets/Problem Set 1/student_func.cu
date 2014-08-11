@@ -42,7 +42,6 @@ void rgba_to_greyscale(const uchar4* const rgbaImage,
                        unsigned char* const greyImage,
                        int numRows, int numCols)
 {
-  //TODO
   //Fill in the kernel to convert from color to greyscale
   //the mapping from components of a uchar4 to RGBA is:
   // .x -> R ; .y -> G ; .z -> B ; .w -> A
@@ -54,14 +53,21 @@ void rgba_to_greyscale(const uchar4* const rgbaImage,
   //First create a mapping from the 2D block and grid locations
   //to an absolute 2D location in the image, then use that to
   //calculate a 1D offset
-//    const uchar4* myRgbaPix = rgbaImage + blockIdx.x + numCols*blockIdx.y;
-//    greyImage[blockIdx.x + numCols*blockIdx.y] = .299f * myRgbaPix->x + .587f * myRgbaPix->y + .114f * myRgbaPix->z;
+
     int myRow = THREADS_PER_BLOCK_Y*blockIdx.y + threadIdx.y;
     int myCol = THREADS_PER_BLOCK_X*blockIdx.x + threadIdx.x;
     if( myRow < numRows && myCol < numCols)
     {
-        const uchar4* myRgbaPix = rgbaImage + myCol + numCols*myRow;
-        greyImage[myCol+ numCols*myRow] = .299f * myRgbaPix->x + .587f * myRgbaPix->y + .114f * myRgbaPix->z;
+    	int index = myCol + numCols*myRow;
+        const uchar4 myRgbaPix = rgbaImage[index];
+        unsigned char R = myRgbaPix.x;
+        unsigned char G = myRgbaPix.y;
+        unsigned char B = myRgbaPix.z;
+        double channelSum = .299f * (double)R + .587f * (double)G + .114f * (double)B;
+        greyImage[index] = channelSum;
+        if(index == 1516){
+           	  printf("gpu: %d %d %d, %f %d\n", R, G, B, channelSum, greyImage[index]);
+        }
     }
 }
 
