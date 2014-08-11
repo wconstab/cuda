@@ -1,3 +1,5 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-wall"
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
@@ -5,6 +7,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <string>
+#pragma GCC diagnostic pop
 
 cv::Mat imageInputRGBA;
 cv::Mat imageOutputRGBA;
