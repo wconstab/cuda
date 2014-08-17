@@ -143,28 +143,15 @@ void separateChannels(const uchar4* const inputImageRGBA,
                       unsigned char* const greenChannel,
                       unsigned char* const blueChannel)
 {
-  const int2 thread_2D_pos = make_int2( blockIdx.x * blockDim.x + threadIdx.x,
-	                                        blockIdx.y * blockDim.y + threadIdx.y);
+  // compute thread index, range check
+  const int imageIdx = blockIdx.x * blockDim.x + threadIdx.x;
+  if(imageIdx >= numRows * numCols) return;
 
-  const int thread_1D_pos = thread_2D_pos.y * numCols + thread_2D_pos.x;
-  int absolute_image_position_x = thread_1D_pos % numCols;
-  int absolute_image_position_y = thread_1D_pos / numCols;
-
-  // NOTE: Be careful not to try to access memory that is outside the bounds of
-  // the image. You'll want code that performs the following check before accessing
-  // GPU memory:
-  //
-   if ( absolute_image_position_x >= numCols ||
-        absolute_image_position_y >= numRows )
-   {
-       return;
-   }
-
-   int imageIdx = absolute_image_position_y * numCols + absolute_image_position_x;
-   uchar4 rgbaPixel = inputImageRGBA[imageIdx];
-   redChannel[imageIdx] = rgbaPixel.x;
-   greenChannel[imageIdx] = rgbaPixel.y;
-   blueChannel[imageIdx] = rgbaPixel.z;
+  // seperate color channels
+  uchar4 rgbaPixel = inputImageRGBA[imageIdx];
+  redChannel[imageIdx] = rgbaPixel.x;
+  greenChannel[imageIdx] = rgbaPixel.y;
+  blueChannel[imageIdx] = rgbaPixel.z;
 }
 
 //This kernel takes in three color channels and recombines them
@@ -178,24 +165,18 @@ void recombineChannels(const unsigned char* const redChannel,
                        int numRows,
                        int numCols)
 {
-  const int2 thread_2D_pos = make_int2( blockIdx.x * blockDim.x + threadIdx.x,
-                                        blockIdx.y * blockDim.y + threadIdx.y);
+  const int imageIdx = blockIdx.x * blockDim.x + threadIdx.x;
+  if(imageIdx >= numRows * numCols) return;
 
-  const int thread_1D_pos = thread_2D_pos.y * numCols + thread_2D_pos.x;
 
-  //make sure we don't try and access memory outside the image
-  //by having any threads mapped there return early
-  if (thread_2D_pos.x >= numCols || thread_2D_pos.y >= numRows)
-    return;
-
-  unsigned char red   = redChannel[thread_1D_pos];
-  unsigned char green = greenChannel[thread_1D_pos];
-  unsigned char blue  = blueChannel[thread_1D_pos];
+  unsigned char red   = redChannel[imageIdx];
+  unsigned char green = greenChannel[imageIdx];
+  unsigned char blue  = blueChannel[imageIdx];
 
   //Alpha should be 255 for no transparency
   uchar4 outputPixel = make_uchar4(red, green, blue, 255);
 
-  outputImageRGBA[thread_1D_pos] = outputPixel;
+  outputImageRGBA[imageIdx] = outputPixel;
 }
 
 unsigned char *d_red, *d_green, *d_blue;
@@ -233,12 +214,12 @@ void your_gaussian_blur(const uchar4 * const h_inputImageRGBA, uchar4 * const d_
                         unsigned char *d_blueBlurred,
                         const int filterWidth)
 {
-  const dim3 blockSize = (BLOCK_SIZE, 1, 1);
+  const dim3 blockSize(BLOCK_SIZE, 1, 1);
 
   //Compute correct grid size (i.e., number of blocks per kernel launch)
   //from the image size and and block size.
   const size_t numPixels = numRows * numCols;
-  const dim3 gridSize = (numPixels / blockSize.x, 1, 1);
+  const dim3 gridSize(numPixels / blockSize.x, 1, 1);
   printf("Using blockSize %d, gridSize %d\n", blockSize.x, gridSize.x);
 
   separateChannels<<<gridSize, blockSize>>>(d_inputImageRGBA,
