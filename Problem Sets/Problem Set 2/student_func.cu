@@ -137,7 +137,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
   }
 
   // write result to output channel
-  outputChannel[imageIdx] = (unsigned char)accum;
+  outputChannel[imageIdx] = accum > 255 ? 255 : (unsigned char)accum;
 }
 
 //This kernel takes in an image represented as a uchar4 and splits
