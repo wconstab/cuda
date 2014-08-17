@@ -45,4 +45,4 @@ reference_calc.o: reference_calc.cpp reference_calc.h
 	g++ -c reference_calc.cpp -I $(OPENCV_INCLUDEPATH) $(GCC_OPTS) -I $(CUDA_INCLUDEPATH)
 
 clean:
-	rm -f *.o *.png hw
+	rm -f eclipse_hw2_out.png HW2_differenceImage.png *.o HW2
