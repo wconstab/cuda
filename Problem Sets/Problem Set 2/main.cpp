@@ -1,5 +1,7 @@
 //Udacity HW2 Driver
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
 #include <iostream>
 #include "timer.h"
 #include "utils.h"
@@ -8,6 +10,7 @@
 
 #include "reference_calc.h"
 #include "compare.h"
+#pragma GCC diagnostic pop
 
 //include the definitions of the above functions for this homework
 #include "HW2.cpp"
