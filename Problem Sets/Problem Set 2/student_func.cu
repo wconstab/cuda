@@ -111,7 +111,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
                    const float* const filter, const int filterWidth)
 {
   // TODO
-  
+
   // NOTE: Be sure to compute any intermediate results in floating point
   // before storing the final result as unsigned char.
 
@@ -124,7 +124,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
   // {
   //     return;
   // }
-  
+
   // NOTE: If a thread's absolute position 2D position is within the image, but some of
   // its neighbors are outside the image, then you will need to be extra careful. Instead
   // of trying to read such a neighbor value from GPU memory (which won't work because
@@ -143,17 +143,28 @@ void separateChannels(const uchar4* const inputImageRGBA,
                       unsigned char* const greenChannel,
                       unsigned char* const blueChannel)
 {
-  // TODO
-  //
+  const int2 thread_2D_pos = make_int2( blockIdx.x * blockDim.x + threadIdx.x,
+	                                        blockIdx.y * blockDim.y + threadIdx.y);
+
+  const int thread_1D_pos = thread_2D_pos.y * numCols + thread_2D_pos.x;
+  int absolute_image_position_x = thread_1D_pos % numCols;
+  int absolute_image_position_y = thread_1D_pos / numCols;
+
   // NOTE: Be careful not to try to access memory that is outside the bounds of
   // the image. You'll want code that performs the following check before accessing
   // GPU memory:
   //
-  // if ( absolute_image_position_x >= numCols ||
-  //      absolute_image_position_y >= numRows )
-  // {
-  //     return;
-  // }
+   if ( absolute_image_position_x >= numCols ||
+        absolute_image_position_y >= numRows )
+   {
+       return;
+   }
+
+   int imageIdx = absolute_image_position_y * numCols + absolute_image_position_x;
+   uchar4 rgbaPixel = inputImageRGBA[imageIdx];
+   redChannel[imageIdx] = rgbaPixel.x;
+   greenChannel[imageIdx] = rgbaPixel.y;
+   blueChannel[imageIdx] = rgbaPixel.z;
 }
 
 //This kernel takes in three color channels and recombines them
@@ -217,8 +228,8 @@ void allocateMemoryAndCopyToGPU(const size_t numRowsImage, const size_t numColsI
 
 void your_gaussian_blur(const uchar4 * const h_inputImageRGBA, uchar4 * const d_inputImageRGBA,
                         uchar4* const d_outputImageRGBA, const size_t numRows, const size_t numCols,
-                        unsigned char *d_redBlurred, 
-                        unsigned char *d_greenBlurred, 
+                        unsigned char *d_redBlurred,
+                        unsigned char *d_greenBlurred,
                         unsigned char *d_blueBlurred,
                         const int filterWidth)
 {
