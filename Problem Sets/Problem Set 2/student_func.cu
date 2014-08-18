@@ -129,11 +129,12 @@ void gaussian_blur(const unsigned char* const inputChannel,
   // read neighboring pixels and apply filter value
   float accum = 0.0;
   for(int fR = 0; fR < filterWidth; fR++){
-    for(int fC = 0; fC <= filterWidth; fC++){
+    for(int fC = 0; fC < filterWidth; fC++){
       float filterVal = filter[fR * filterWidth + fC];
       int neighborR = clamp(imageR, numRows, fR, filterWidth);
       int neighborC = clamp(imageC, numCols, fC, filterWidth);
-      accum += filterVal * (float)inputChannel[neighborR * numCols + neighborC];
+      float thisVal = (float)inputChannel[(neighborR * numCols) + neighborC];
+      accum += filterVal * thisVal;
     }
   }
 
@@ -227,7 +228,7 @@ void your_gaussian_blur(const uchar4 * const h_inputImageRGBA, uchar4 * const d_
   //Compute correct grid size (i.e., number of blocks per kernel launch)
   //from the image size and and block size.
   const size_t numPixels = numRows * numCols;
-  const dim3 gridSize(numPixels / blockSize.x, 1, 1);
+  const dim3 gridSize((numPixels / blockSize.x) + 1 , 1, 1);
   printf("Using blockSize %d, gridSize %d\n", blockSize.x, gridSize.x);
 
   separateChannels<<<gridSize, blockSize>>>(d_inputImageRGBA,
