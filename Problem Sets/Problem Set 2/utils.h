@@ -52,6 +52,7 @@ void checkResultsEps(const T* const ref, const T* const gpu, size_t numElem, dou
       std::cerr << "Difference at pos " << +i << " exceeds tolerance of " << eps1 << std::endl;
       std::cerr << "Reference: " << std::setprecision(17) << +ref[i] <<
         "\nGPU      : " << +gpu[i] << std::endl;
+      std::cerr << "rgb index " << (i % 3) << ", pixel pos " << i/3 << " num elem " << numElem << std::endl;
       exit(1);
     }
     totalDiff += diff * diff;

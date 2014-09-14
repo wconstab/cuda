@@ -2,6 +2,8 @@
 #include <cassert>
 // for uchar4 struct
 #include <cuda_runtime.h>
+#include <iostream>
+static const int sDebugPix = 4235;
 
 void channelConvolution(const unsigned char* const channel,
                         unsigned char* const channelBlurred,
@@ -20,13 +22,23 @@ void channelConvolution(const unsigned char* const channel,
         for (int filter_c = -filterWidth/2; filter_c <= filterWidth/2; ++filter_c) {
           //Find the global image position for this filter position
           //clamp to boundary of the image
-		  int image_r = std::min(std::max(r + filter_r, 0), static_cast<int>(numRows - 1));
+		      int image_r = std::min(std::max(r + filter_r, 0), static_cast<int>(numRows - 1));
           int image_c = std::min(std::max(c + filter_c, 0), static_cast<int>(numCols - 1));
 
-          float image_value = static_cast<float>(channel[image_r * numCols + image_c]);
+          int image_idx = image_r * numCols + image_c;
+          float image_value = static_cast<float>(channel[image_idx]);
           float filter_value = filter[(filter_r + filterWidth/2) * filterWidth + filter_c + filterWidth/2];
 
           result += image_value * filter_value;
+
+          if((r * numCols + c) == sDebugPix){
+            std::cout << "ref "
+                      << " fR " << filter_r + filterWidth/2
+                      << " fC " << filter_c + filterWidth/2
+                      << " filterVal " << filter_value
+                      << " neighborR " << image_r << " neighborC " << image_c
+                      << " thisVal " << image_value << " accum " << result << std::endl;
+          }
         }
       }
 
@@ -58,8 +70,8 @@ void referenceCalculation(const uchar4* const rgbaImage, uchar4 *const outputIma
 
   //Now we can do the convolution for each of the color channels
   channelConvolution(red, redBlurred, numRows, numCols, filter, filterWidth);
-  channelConvolution(green, greenBlurred, numRows, numCols, filter, filterWidth);
-  channelConvolution(blue, blueBlurred, numRows, numCols, filter, filterWidth);
+//  channelConvolution(green, greenBlurred, numRows, numCols, filter, filterWidth);
+//  channelConvolution(blue, blueBlurred, numRows, numCols, filter, filterWidth);
 
   //now recombine into the output image - Alpha is 255 for no transparency
   for (size_t i = 0; i < numRows * numCols; ++i) {

@@ -104,7 +104,7 @@
 #include <stdio.h>
 
 #define BLOCK_SIZE 512
-
+#define DEBUG_PIX 4235
 __device__
 int clamp(int imageIdx, int imageDim, int filterIdx, int filterDim){
   int filterOffset = filterIdx - filterDim/2;
@@ -113,6 +113,7 @@ int clamp(int imageIdx, int imageDim, int filterIdx, int filterDim){
   clampedR = (clampedR < 0 ? 0 : clampedR);
   return clampedR;
 }
+//ua6483
 
 __global__
 void gaussian_blur(const unsigned char* const inputChannel,
@@ -133,13 +134,21 @@ void gaussian_blur(const unsigned char* const inputChannel,
       float filterVal = filter[fR * filterWidth + fC];
       int neighborR = clamp(imageR, numRows, fR, filterWidth);
       int neighborC = clamp(imageC, numCols, fC, filterWidth);
-      float thisVal = (float)inputChannel[(neighborR * numCols) + neighborC];
+      float thisVal = static_cast<float>(inputChannel[(neighborR * numCols) + neighborC]);
       accum += filterVal * thisVal;
+      if(imageIdx == DEBUG_PIX){
+        printf("fR %d fC %d filterVal %llf neighborR %d neighborC %d thisVal %f accum %f\n",
+            fR, fC, filterVal, neighborR, neighborC, thisVal, accum);
+      }
     }
   }
 
   // write result to output channel
   outputChannel[imageIdx] = accum > 255 ? 255 : (unsigned char)accum;
+//  if(imageIdx == DEBUG_PIX){
+//    printf("output %d\n",
+//        outputChannel[imageIdx]);
+//  }
 }
 
 //This kernel takes in an image represented as a uchar4 and splits
@@ -161,6 +170,9 @@ void separateChannels(const uchar4* const inputImageRGBA,
   redChannel[imageIdx] = rgbaPixel.x;
   greenChannel[imageIdx] = rgbaPixel.y;
   blueChannel[imageIdx] = rgbaPixel.z;
+  if(imageIdx == DEBUG_PIX){
+    printf("extracted RGB %d %d %d ", redChannel[imageIdx], greenChannel[imageIdx], blueChannel[imageIdx]);
+  }
 }
 
 //This kernel takes in three color channels and recombines them
@@ -230,6 +242,7 @@ void your_gaussian_blur(const uchar4 * const h_inputImageRGBA, uchar4 * const d_
   const size_t numPixels = numRows * numCols;
   const dim3 gridSize((numPixels / blockSize.x) + 1 , 1, 1);
   printf("Using blockSize %d, gridSize %d\n", blockSize.x, gridSize.x);
+  printf(" nRows = %d, /cols %d\n", numRows, numCols);
 
   separateChannels<<<gridSize, blockSize>>>(d_inputImageRGBA,
 										    numRows,
@@ -247,15 +260,15 @@ void your_gaussian_blur(const uchar4 * const h_inputImageRGBA, uchar4 * const d_
                                          numRows, numCols,
                                          d_filter, filterWidth);
 
-  gaussian_blur<<<gridSize, blockSize>>>(d_greenBlurred,
-		                                 d_greenBlurred,
-                                         numRows, numCols,
-                                         d_filter, filterWidth);
-
-  gaussian_blur<<<gridSize, blockSize>>>(d_blueBlurred,
-		                                 d_blueBlurred,
-                                         numRows, numCols,
-                                         d_filter, filterWidth);
+//  gaussian_blur<<<gridSize, blockSize>>>(d_greenBlurred,
+//		                                 d_greenBlurred,
+//                                         numRows, numCols,
+//                                         d_filter, filterWidth);
+//
+//  gaussian_blur<<<gridSize, blockSize>>>(d_blueBlurred,
+//		                                 d_blueBlurred,
+//                                         numRows, numCols,
+//                                         d_filter, filterWidth);
 
 
   // Again, call cudaDeviceSynchronize(), then call checkCudaErrors() immediately after
