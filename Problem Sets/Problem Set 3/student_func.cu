@@ -6,7 +6,7 @@
 
   A High Dynamic Range (HDR) image contains a wider variation of intensity
   and color than is allowed by the RGB format with 1 byte per channel that we
-  have used in the previous assignment.  
+  have used in the previous assignment.
 
   To store this extra information we use single precision floating point for
   each channel.  This allows for an extremely wide range of intensity values.
@@ -53,7 +53,7 @@
   Old TV signals used to be transmitted in this way so that black & white
   televisions could display the luminance channel while color televisions would
   display all three of the channels.
-  
+
 
   Tone-mapping
   ============
@@ -100,5 +100,55 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
        the cumulative distribution of luminance values (this should go in the
        incoming d_cdf pointer which already has been allocated for you)       */
 
+  // 0 - cheat and copy to host for sanity
+  unsigned int channelSize = numRows * numCols;
+  float* h_logLuminance = (float*)malloc(channelSize * sizeof(float));
+  checkCudaErrors(cudaMemcpy(h_logLuminance,   d_logLuminance,   channelSize * sizeof(float), cudaMemcpyDeviceToHost));
 
+  // 1 min/max luminance
+  min_logLum = h_logLuminance[0];
+  max_logLum = h_logLuminance[0];
+  for (size_t i = 1; i < numCols * numRows; ++i) {
+    min_logLum = std::min(h_logLuminance[i], min_logLum);
+    max_logLum = std::max(h_logLuminance[i], max_logLum);
+  }
+
+  // 2 range
+  float range = max_logLum - min_logLum;
+  printf("max %f, min %f, range %f\n", max_logLum, min_logLum, range);
+
+  // 3 histogram
+  unsigned int* h_bins = (unsigned int*)malloc(numBins * sizeof(unsigned int));
+  for(int i = 0; i < numBins; i++){
+    h_bins[i] = 0;
+  }
+  for(int i = 0; i < channelSize; i++){
+    int bin = (h_logLuminance[i] - min_logLum) / range * numBins;
+    h_bins[bin]++;
+  }
+  printf("\nIDX  \t");
+  for(int i = 0; i < numBins; i++){
+    printf("[%d]\t", i);
+  }
+  printf("\nHIST \t");
+  for(int i = 0; i < numBins; i++){
+    printf("%d\t", h_bins[i]);
+  }
+
+  // 4
+  unsigned int* h_cdf = (unsigned int*)malloc(numBins * sizeof(unsigned int));
+  h_cdf[0] = 0;
+  for(int i = 1; i < numBins; i++){
+    h_cdf[i] = h_cdf[i-1] + h_bins[i-1];
+  }
+
+  printf("\nCDF  \t");
+  for(int i = 0; i < numBins; i++){
+    printf("%d\t", h_cdf[i]);
+  }
+  checkCudaErrors(cudaMemcpy(d_cdf,   h_cdf,   numBins*sizeof(unsigned int), cudaMemcpyHostToDevice));
+
+  free(h_logLuminance);
+  free(h_bins);
+  free(h_cdf);
 }
