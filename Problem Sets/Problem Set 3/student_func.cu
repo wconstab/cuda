@@ -85,7 +85,7 @@
 #define MAX(X,Y) (X > Y ? X : Y)
 
 #define BLOCKSIZE 512
-__global__ void min_max_luminance(
+__global__ void gpu_minmax(
     const float* d_logLuminance,
     float* d_temp,
     float* d_min_lum,
@@ -115,7 +115,7 @@ __global__ void min_max_luminance(
   if(bTid == 0) d_temp[blockDim.x + blockIdx.x] = s_min[bTid];
 }
 
-__global__ void min_max_luminance_2(
+__global__ void gpu_minmax2(
     const float* d_logLuminance,
     float* d_temp,
     float* d_min_lum,
@@ -148,7 +148,7 @@ __global__ void min_max_luminance_2(
 
 }
 
-__global__ void bins(
+__global__ void gpu_hist(
     const float* d_logLuminance,
     unsigned int* d_bins,
     float d_min_lum,
@@ -160,15 +160,37 @@ __global__ void bins(
 
   extern __shared__ unsigned int s_bins[];
 
-  if(gTid == 0) printf("d_min_lum %f, d_range %f, numBins %d\n", d_min_lum, d_range, numBins);
+//  if(gTid == 0) printf("d_min_lum %f, d_range %f, numBins %d\n", d_min_lum, d_range, numBins);
   unsigned int bin = (d_logLuminance[gTid] - d_min_lum) / d_range * numBins;
   if(bin >= numBins) bin = numBins - 1;
 //  unsigned int bin = gTid / numBins;
   atomicAdd(&d_bins[bin], 1);
 
+  // TODO try optimizations:
+    // - local register copies of histogram (if more input items than threads
+    // - shared histograms per block, then reduce
+
 }
 
+__global__ void gpu_cdf(
+    unsigned int* d_hist,
+    unsigned int* d_cdf,
+    unsigned int    numBins)
+{
+  int bTid = threadIdx.x;
+//  int gTid = (blockDim.x *blockIdx.x) + threadIdx.x;
+  int s;
+  if(bTid > 0)
+    d_cdf[bTid] = d_hist[bTid-1];
+  __syncthreads();
 
+  for(s = 1; s < numBins; s*=2){
+    if(bTid + s < numBins){
+      atomicAdd(&d_cdf[bTid + s], d_cdf[bTid]);
+    }
+    __syncthreads();
+  }
+}
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -196,9 +218,9 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
 
   const dim3 blockSize(512, 1, 1);
   const dim3 gridSize( (numCols*numRows + blockSize.x - 1) / blockSize.x, 1, 1);
-  min_max_luminance<<<gridSize, blockSize, blockSize.x>>>(d_logLuminance, d_temp, d_min_lum, d_max_lum,
+  gpu_minmax<<<gridSize, blockSize, blockSize.x>>>(d_logLuminance, d_temp, d_min_lum, d_max_lum,
                                              numRows, numCols);
-  min_max_luminance_2<<<1, blockSize, blockSize.x>>>(d_logLuminance, d_temp, d_min_lum, d_max_lum,
+  gpu_minmax2<<<1, blockSize, blockSize.x>>>(d_logLuminance, d_temp, d_min_lum, d_max_lum,
                                              numRows, numCols);
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 //  float h_min_lum=0, h_max_lum=0;
@@ -207,7 +229,7 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
 
   // 2 range
   float h_range = max_logLum - min_logLum;
-  printf("max %f, min %f, range %f\n", max_logLum, min_logLum, h_range);
+//  printf("max %f, min %f, range %f\n", max_logLum, min_logLum, h_range);
 
   // 3 histogram
   float* d_range;
@@ -217,15 +239,29 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
   checkCudaErrors(cudaMalloc(&d_bins, (size_t)numBins*sizeof(unsigned int)));
   checkCudaErrors(cudaMemset(d_bins, 0, (size_t)numBins*sizeof(unsigned int)));
 
-  bins<<<gridSize, blockSize, numBins*sizeof(unsigned int)>>>(d_logLuminance, d_bins, min_logLum, h_range, numBins);
+  gpu_hist<<<gridSize, blockSize, numBins*sizeof(unsigned int)>>>(d_logLuminance, d_bins, min_logLum, h_range, numBins);
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
-  int channelSize = numRows * numCols;
-  float* h_logLuminance = (float*)malloc(channelSize * sizeof(float));
-  checkCudaErrors(cudaMemcpy(h_logLuminance, d_logLuminance, channelSize*sizeof(float), cudaMemcpyDeviceToHost));
-  unsigned int* h_bins = (unsigned int*)malloc(numBins * sizeof(unsigned int));
-  checkCudaErrors(cudaMemcpy(h_bins, d_bins, numBins*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+//  int channelSize = numRows * numCols;
+//  float* h_logLuminance = (float*)malloc(channelSize * sizeof(float));
+//  checkCudaErrors(cudaMemcpy(h_logLuminance, d_logLuminance, channelSize*sizeof(float), cudaMemcpyDeviceToHost));
+//  unsigned int* h_bins = (unsigned int*)malloc(numBins * sizeof(unsigned int));
+//  checkCudaErrors(cudaMemcpy(h_bins, d_bins, numBins*sizeof(unsigned int), cudaMemcpyDeviceToHost));
 
 
+
+
+  // 4
+//  unsigned int* d_cdf;
+//  checkCudaErrors(cudaMalloc(&d_cdf, (size_t)numBins*sizeof(unsigned int)));
+  checkCudaErrors(cudaMemset(d_cdf, 0, (size_t)numBins*sizeof(unsigned int)));
+  gpu_cdf<<<1, numBins>>>(d_bins, d_cdf, numBins);
+//  unsigned int* h_cdf = (unsigned int*)malloc(numBins * sizeof(unsigned int));
+
+//  checkCudaErrors(cudaMemcpy(h_cdf, d_cdf,   numBins*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+//    h_cdf[0] = 0;
+//    for(int i = 1; i < numBins; i++){
+//      h_cdf[i] = h_cdf[i-1] + h_bins[i-1];
+//    }
 //  printf("\nIDX  \t");
 //  for(int i = 0; i < numBins; i++){
 //    printf("[%u]\t", i);
@@ -234,21 +270,12 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
 //  for(int i = 0; i < numBins; i++){
 //    printf("%u\t", h_bins[i]);
 //  }
-
-  // 4
-  unsigned int* h_cdf = (unsigned int*)malloc(numBins * sizeof(unsigned int));
-  h_cdf[0] = 0;
-  for(int i = 1; i < numBins; i++){
-    h_cdf[i] = h_cdf[i-1] + h_bins[i-1];
-  }
-
 //  printf("\nCDF  \t");
 //  for(int i = 0; i < numBins; i++){
 //    printf("%d\t", h_cdf[i]);
 //  }
-  checkCudaErrors(cudaMemcpy(d_cdf,   h_cdf,   numBins*sizeof(unsigned int), cudaMemcpyHostToDevice));
-
-  free(h_bins);
-  free(h_cdf);
-  printf("\nDone.\n");
+//  checkCudaErrors(cudaMemcpy(d_cdf,   h_cdf,   numBins*sizeof(unsigned int), cudaMemcpyHostToDevice));
+//  free(h_bins);
+//  free(h_cdf);
+//  printf("\nDone.\n");
 }
