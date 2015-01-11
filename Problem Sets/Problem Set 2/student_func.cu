@@ -113,7 +113,6 @@ int clamp(int imageIdx, int imageDim, int filterIdx, int filterDim){
   clampedR = (clampedR < 0 ? 0 : clampedR);
   return clampedR;
 }
-//ua6483
 
 __global__
 void gaussian_blur(const unsigned char* const inputChannel,
