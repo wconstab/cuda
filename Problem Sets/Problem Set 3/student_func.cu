@@ -148,6 +148,27 @@ __global__ void min_max_luminance_2(
 
 }
 
+__global__ void bins(
+    const float* d_logLuminance,
+    unsigned int* d_bins,
+    float d_min_lum,
+    float d_range,
+    unsigned int    numBins)
+{
+//  int bTid = threadIdx.x;
+  int gTid = (blockDim.x *blockIdx.x) + threadIdx.x;
+
+  extern __shared__ unsigned int s_bins[];
+
+  if(gTid == 0) printf("d_min_lum %f, d_range %f, numBins %d\n", d_min_lum, d_range, numBins);
+  unsigned int bin = (d_logLuminance[gTid] - d_min_lum) / d_range * numBins;
+  if(bin >= numBins) bin = numBins - 1;
+//  unsigned int bin = gTid / numBins;
+  atomicAdd(&d_bins[bin], 1);
+
+}
+
+
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -185,29 +206,34 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
   checkCudaErrors(cudaMemcpy(&max_logLum, d_max_lum, sizeof(float), cudaMemcpyDeviceToHost));
 
   // 2 range
-  float range = max_logLum - min_logLum;
-  printf("max %f, min %f, range %f\n", max_logLum, min_logLum, range);
+  float h_range = max_logLum - min_logLum;
+  printf("max %f, min %f, range %f\n", max_logLum, min_logLum, h_range);
 
   // 3 histogram
+  float* d_range;
+  unsigned int* d_bins;
+  checkCudaErrors(cudaMalloc(&d_range, (size_t)sizeof(float)));
+  checkCudaErrors(cudaMemcpy(d_range, &h_range, sizeof(float), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMalloc(&d_bins, (size_t)numBins*sizeof(unsigned int)));
+  checkCudaErrors(cudaMemset(d_bins, 0, (size_t)numBins*sizeof(unsigned int)));
+
+  bins<<<gridSize, blockSize, numBins*sizeof(unsigned int)>>>(d_logLuminance, d_bins, min_logLum, h_range, numBins);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   int channelSize = numRows * numCols;
   float* h_logLuminance = (float*)malloc(channelSize * sizeof(float));
   checkCudaErrors(cudaMemcpy(h_logLuminance, d_logLuminance, channelSize*sizeof(float), cudaMemcpyDeviceToHost));
   unsigned int* h_bins = (unsigned int*)malloc(numBins * sizeof(unsigned int));
-  for(int i = 0; i < numBins; i++){
-    h_bins[i] = 0;
-  }
-  for(int i = 0; i < channelSize; i++){
-    int bin = (h_logLuminance[i] - min_logLum) / range * numBins;
-    h_bins[bin]++;
-  }
-  printf("\nIDX  \t");
-  for(int i = 0; i < numBins; i++){
-    printf("[%d]\t", i);
-  }
-  printf("\nHIST \t");
-  for(int i = 0; i < numBins; i++){
-    printf("%d\t", h_bins[i]);
-  }
+  checkCudaErrors(cudaMemcpy(h_bins, d_bins, numBins*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+
+
+//  printf("\nIDX  \t");
+//  for(int i = 0; i < numBins; i++){
+//    printf("[%u]\t", i);
+//  }
+//  printf("\nHIST \t");
+//  for(int i = 0; i < numBins; i++){
+//    printf("%u\t", h_bins[i]);
+//  }
 
   // 4
   unsigned int* h_cdf = (unsigned int*)malloc(numBins * sizeof(unsigned int));
@@ -216,12 +242,13 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
     h_cdf[i] = h_cdf[i-1] + h_bins[i-1];
   }
 
-  printf("\nCDF  \t");
-  for(int i = 0; i < numBins; i++){
-    printf("%d\t", h_cdf[i]);
-  }
+//  printf("\nCDF  \t");
+//  for(int i = 0; i < numBins; i++){
+//    printf("%d\t", h_cdf[i]);
+//  }
   checkCudaErrors(cudaMemcpy(d_cdf,   h_cdf,   numBins*sizeof(unsigned int), cudaMemcpyHostToDevice));
 
   free(h_bins);
   free(h_cdf);
+  printf("\nDone.\n");
 }
