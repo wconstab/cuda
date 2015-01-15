@@ -42,26 +42,31 @@
 
  */
 
-#define BLOCKSIZE 4
+#define BLOCKSIZE 512
+#define DEBUG false
 
 void printArrayIndices(unsigned int num){
-  printf("IDX  \t");
-  for(int i = 0; i < num; i++){
-    printf("[%u]\t\t", i);
+  if(DEBUG){
+    printf("IDX  \t");
+    for(int i = 0; i < num; i++){
+      printf("[%u]\t\t", i);
+    }
+    printf("\n");
   }
-  printf("\n");
 }
 void printCudaUnsignedIntArr(const char* name, unsigned int* const d_Vals, unsigned int numVals){
-  unsigned int* h_vals = (unsigned int*)malloc(numVals*sizeof(unsigned int));
-  checkCudaErrors(cudaMemcpy(h_vals, d_Vals, numVals*sizeof(unsigned int), cudaMemcpyDeviceToHost));
-  printf("%s\t", name);
-  for(int i = 0; i < numVals; i++){
-    if(h_vals[i] > 99999999)
-      printf("%u\t", h_vals[i] );
-    else
-      printf("%u\t\t", h_vals[i] );
+  if(DEBUG){
+    unsigned int* h_vals = (unsigned int*)malloc(numVals*sizeof(unsigned int));
+    checkCudaErrors(cudaMemcpy(h_vals, d_Vals, numVals*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+    printf("%s\t", name);
+    for(int i = 0; i < numVals; i++){
+      if(h_vals[i] > 99999999)
+        printf("%u\t", h_vals[i] );
+      else
+        printf("%u\t\t", h_vals[i] );
+    }
+    printf("\n");
   }
-  printf("\n");
 }
 
 
@@ -172,7 +177,7 @@ unsigned int sort_helper(unsigned int bit,
                  unsigned int        scatterStart,
                  size_t              numElems)
 {
-  printf("Sort bit %d, pred %d, scatterStart %d\n", bit, predicateVal, scatterStart);
+  if(DEBUG) printf("Sort bit %d, pred %d, scatterStart %d\n", bit, predicateVal, scatterStart);
   unsigned int printLen = numElems;
 
   const dim3 blockSize(BLOCKSIZE, 1, 1);
@@ -242,10 +247,10 @@ void your_sort(unsigned int* const d_inputVals,
                 size_t numElems)
 {
 
-  numElems = 16;
-  unsigned int h_debugVals[numElems];
-  for(int i = 0; i < numElems; i++) h_debugVals[i] = numElems-i-1;
-  checkCudaErrors(cudaMemcpy(d_inputVals, h_debugVals, numElems * sizeof(unsigned int), cudaMemcpyHostToDevice));
+//  numElems = 1024;
+//  unsigned int h_debugVals[numElems];
+//  for(int i = 0; i < numElems; i++) h_debugVals[i] = numElems-i-1;
+//  checkCudaErrors(cudaMemcpy(d_inputVals, h_debugVals, numElems * sizeof(unsigned int), cudaMemcpyHostToDevice));
 
 
   sort_wrapper(d_inputVals, d_inputPos, d_outputVals, d_outputPos, numElems);
