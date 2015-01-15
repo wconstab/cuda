@@ -235,42 +235,6 @@ void sort_wrapper(unsigned int* const d_inputVals,
 }
 
 
-void debug2(unsigned int* const d_inputVals,
-               unsigned int* const d_inputPos,
-               unsigned int* const d_outputVals,
-               unsigned int* const d_outputPos,
-                size_t numElems)
-{
-
-  unsigned int printLen = numElems;
-
-
-
-  unsigned int bit = 0;
-  unsigned int highestZero = sort_helper(bit, 0, d_inputVals, d_inputPos, d_outputVals, 0, numElems);
-  printf("\nhighestZero %d\n", highestZero);
-  sort_helper(bit, 1, d_inputVals, d_inputPos, d_outputVals, highestZero+1, numElems);
-  printCudaUnsignedIntArr("SORT1", d_outputVals, printLen);
-
-  // outputVals has correct results at this point
-
-  bit = 1;
-  highestZero = sort_helper(bit, 0, d_outputVals, d_outputPos, d_inputVals, 0, numElems);
-  printCudaUnsignedIntArr("SORT0", d_inputVals, printLen);
-  // inputVals has correct results for first 8 positions, and garbage for second 8 positions
-
-  // TODO double check that outputVals isn't being modified when it's on the input side
-  // and ... ?
-  printf("\nhighestZero %d\n", highestZero);
-  sort_helper(bit, 1, d_outputVals, d_outputPos, d_inputVals, highestZero+1, numElems);
-  printCudaUnsignedIntArr("SORT1", d_inputVals, printLen);
-
-
-//  sort_helper(bit, 1, d_inputVals, d_inputPos, d_outputVals, highestZero, numElems);
-//  printCudaUnsignedIntArr("SORT1", d_outputVals, printLen);
-
-}
-
 void your_sort(unsigned int* const d_inputVals,
                unsigned int* const d_inputPos,
                unsigned int* const d_outputVals,
@@ -283,7 +247,6 @@ void your_sort(unsigned int* const d_inputVals,
   for(int i = 0; i < numElems; i++) h_debugVals[i] = numElems-i-1;
   checkCudaErrors(cudaMemcpy(d_inputVals, h_debugVals, numElems * sizeof(unsigned int), cudaMemcpyHostToDevice));
 
-//  debug2(d_inputVals, d_inputPos, d_outputVals, d_outputPos, numElems);
 
   sort_wrapper(d_inputVals, d_inputPos, d_outputVals, d_outputPos, numElems);
 }
