@@ -26,29 +26,37 @@
 
 
 #include "utils.h"
+#define N 1024
 
 __global__
 void yourHisto(const unsigned int* const vals, //INPUT
                unsigned int* const histo,      //OUPUT
                int numVals)
 {
-  //TODO fill in this kernel to calculate the histogram
-  //as quickly as possible
+  unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if(tid < numVals){
+    unsigned int bin = vals[tid];
+//    printf("tid %d bin %d\n", tid, bin);
 
-  //Although we provide only one kernel skeleton,
-  //feel free to use more if it will help you
-  //write faster code
+    atomicAdd(&histo[bin], 1);
+  }
 }
 
+/** REFERENCE
+ *   //zero out bins
+  for (size_t i = 0; i < numBins; ++i)
+    histo[i] = 0;
+
+  //go through vals and increment appropriate bin
+  for (size_t i = 0; i < numElems; ++i)
+    histo[vals[i]]++;
+ */
 void computeHistogram(const unsigned int* const d_vals, //INPUT
                       unsigned int* const d_histo,      //OUTPUT
                       const unsigned int numBins,
                       const unsigned int numElems)
 {
-  //TODO Launch the yourHisto kernel
-
-  //if you want to use/launch more than one kernel,
-  //feel free
+  yourHisto<<<(numElems+N)/N, N>>>(d_vals, d_histo, numElems);
 
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 }
