@@ -42,8 +42,26 @@
 
  */
 
-#define BLOCKSIZE 512
-#define DEBUG false
+#define BLOCKSIZE 1024
+#define DEBUG true
+#define NUMELEMS 3000
+
+// blocksize 1024, numElems 3000
+//idx 2575 sum 2788;
+//idx 2576 sum 2796
+
+// bit 0 pred 0
+//PSums 511   512   476
+//Sums  511   1023    1499
+// bit 0 pred 1
+//PSums 512   512   484
+//Sums  512   1024    1508
+// why 2575?
+
+// psum for pred 1 wrong.
+//block 2, bTid 951, produced psum 484
+//block 2, bTid 951, produced psum 476
+
 
 void printArrayIndices(unsigned int num){
   if(DEBUG){
@@ -69,6 +87,21 @@ void printCudaUnsignedIntArr(const char* name, unsigned int* const d_Vals, unsig
   }
 }
 
+void checkSorted(unsigned int* const d_inputVals, size_t numElems){
+  unsigned int* h_vals = (unsigned int*)malloc(numElems*sizeof(unsigned int));
+  checkCudaErrors(cudaMemcpy(h_vals, d_inputVals, numElems*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+
+  unsigned int last = h_vals[0];
+  for(unsigned int i = 1; i < numElems; i++){
+    if(h_vals[i] < last){
+      printf("sort error: [%u]=%u, [%u]=%u\n", i-1, last, i, h_vals[i]);
+      return;
+    }
+  }
+  printf("sort check PASS\n");
+}
+
+
 
 __global__ void gpu_binary_predicate(
     unsigned int* const d_inputVals,
@@ -85,7 +118,37 @@ __global__ void gpu_binary_predicate(
   }
 }
 
+
+//__global__ void gpu_exclusive_sum_scan(
+//    unsigned int* const d_predicate,
+//    unsigned int* const d_inputVals,
+//    unsigned int* d_partialSums,
+//    const size_t numElems
+//)
+//{
+//  __shared__ unsigned int s_temp[BLOCKSIZE];
+//
+//  int bTid = threadIdx.x;
+//  int gTid = (blockDim.x *blockIdx.x) + threadIdx.x;
+//  int thisBlockNumElem = BLOCKSIZE;
+//  if(blockIdx.x == numElems/BLOCKSIZE && numElems%BLOCKSIZE != 0){
+//    thisBlockNumElem = numElems%BLOCKSIZE;
+//  }
+//
+//  // take the predicate values and sum-scan them
+//  // - but it doesn't get finished in one function, because of synchronization between threads.
+//  // need to divide into sectors.
+//
+//
+//}
+
+// whawt is special about 2976?
+// cant seem to find any reason why the problem starts happening there. seems like addition is working fine for the first 2976 elements.
+// then there is some corruption for the remaining ones.
+
+
 __global__ void gpu_exclusive_sum_scan(
+    unsigned int* const d_predicate,
     unsigned int* const d_inputVals,
     unsigned int* d_partialSums,
     const size_t numElems
@@ -95,21 +158,31 @@ __global__ void gpu_exclusive_sum_scan(
 
   int bTid = threadIdx.x;
   int gTid = (blockDim.x *blockIdx.x) + threadIdx.x;
+  int thisBlockNumElem = BLOCKSIZE;
+  if(blockIdx.x == numElems/BLOCKSIZE && numElems%BLOCKSIZE != 0){
+    thisBlockNumElem = numElems%BLOCKSIZE;
+  }
 
+  if(bTid == 0) printf("block %u numElem %u\n", blockIdx.x, thisBlockNumElem);
+  s_temp[bTid] = 0;
   if(gTid < numElems){
     s_temp[bTid] = d_inputVals[gTid];
     __syncthreads();
 
     int s;
     for(s = 1; s < BLOCKSIZE; s*=2){
-      if(bTid + s < BLOCKSIZE){
+      if(bTid + s < thisBlockNumElem){
         atomicAdd(&s_temp[bTid+s], s_temp[bTid]);
       }
       __syncthreads();
     }
     d_inputVals[gTid] = s_temp[bTid];
+    __syncthreads();
 
-    if(bTid == 0) d_partialSums[blockIdx.x] = s_temp[BLOCKSIZE-1];
+    if(bTid == thisBlockNumElem-1){
+      d_partialSums[blockIdx.x] = s_temp[thisBlockNumElem-1];
+      printf("block %u, bTid %u, produced psum %u\n", blockIdx.x, bTid, d_partialSums[blockIdx.x]);
+    }
   }
 }
 
@@ -121,31 +194,36 @@ __global__ void gpu_exclusive_sum_scan_2(
   extern __shared__ unsigned int s_temp[];
   int bTid = threadIdx.x;
 
-  if(bTid < numSums){
+  if(bTid < numSums)
+  {
     s_temp[bTid] = d_partialSums[bTid];
     __syncthreads();
     int s;
     for(s = 1; s < numSums; s*=2){
       if(bTid + s < numSums){
-        s_temp[bTid+s] += s_temp[bTid];
+         atomicAdd(&s_temp[bTid+s], s_temp[bTid]);
       }
       __syncthreads();
     }
     d_partialSums[bTid] = s_temp[bTid];
+//    if(d_partialSums[bTid] != ((BLOCKSIZE/2) * (bTid+1))-1) printf("bTid %d produced Sum %d\n", bTid, d_partialSums[bTid]);
   }
 }
 
 __global__ void gpu_exclusive_sum_scan_3(
     unsigned int* const d_inputVals,
     unsigned int* d_partialSums,
+    unsigned int scatterStart,
     const size_t numElems
 )
 {
 
   int gTid = (blockDim.x *blockIdx.x) + threadIdx.x;
 
+  d_inputVals[gTid] += scatterStart;
   if(blockIdx.x > 0 && gTid < numElems){
     d_inputVals[gTid] += d_partialSums[blockIdx.x - 1];
+//    if(d_inputVals[gTid] != gTid) printf("gTid %d just produced addr %u, using pSum %u, sstart %u\n", gTid, d_inputVals[gTid], d_partialSums[blockIdx.x -1], scatterStart);
   }
 }
 
@@ -154,17 +232,16 @@ __global__ void gpu_scatter(
     unsigned int* const d_predicate,
     unsigned int* const d_addr,
     unsigned int* const d_outputVals,
-    unsigned int scatterStart,
     const size_t numElems
 )
 {
   int gTid = (blockDim.x *blockIdx.x) + threadIdx.x;
   if(gTid < numElems){
     if(d_predicate[gTid]){
-      unsigned int addr = scatterStart + d_addr[gTid];
+      unsigned int addr = d_addr[gTid];
       if(addr < numElems){
         d_outputVals[addr] = d_inputVals[gTid];
-      }//else printf("addr %u out of range\n", addr);
+      }else printf("addr %u out of range\n", addr);
     }
   }
 }
@@ -178,6 +255,8 @@ unsigned int sort_helper(unsigned int bit,
                  size_t              numElems)
 {
   if(DEBUG) printf("Sort bit %d, pred %d, scatterStart %d\n", bit, predicateVal, scatterStart);
+  printArrayIndices(numElems);
+
   unsigned int printLen = numElems;
 
   const dim3 blockSize(BLOCKSIZE, 1, 1);
@@ -187,16 +266,24 @@ unsigned int sort_helper(unsigned int bit,
   checkCudaErrors(cudaMalloc(&d_predicate, numElems * sizeof(unsigned int)));
   checkCudaErrors(cudaMalloc(&d_partialSums, gridSize.x*sizeof(unsigned int)));
 
-  // generate the predicate for specified bit, value 0, store in inputPos
+  // generate the predicate for specified bit
   gpu_binary_predicate<<<gridSize, blockSize>>>(d_inputVals, d_predicate, bit, predicateVal, numElems);
   printCudaUnsignedIntArr("PRED ", d_predicate, printLen);
 
-  checkCudaErrors(cudaMemcpy(d_inputPos + 1, d_predicate, (numElems - 1 )* sizeof(unsigned int), cudaMemcpyDeviceToDevice));
+  checkCudaErrors(cudaMemcpy(d_inputPos+1, d_predicate, (numElems-1) * sizeof(unsigned int), cudaMemcpyDeviceToDevice));
+  unsigned int zero = 0;
+  checkCudaErrors(cudaMemcpy(d_inputPos , &zero, sizeof(unsigned int), cudaMemcpyHostToDevice));
 
   // scan-sum the predicate values and generate scatter addresses
-  gpu_exclusive_sum_scan<<<gridSize, blockSize>>>(d_inputPos, d_partialSums, numElems);
+  gpu_exclusive_sum_scan<<<gridSize, blockSize>>>(d_predicate, d_inputPos, d_partialSums, numElems);
+  printCudaUnsignedIntArr("iPsTm", d_inputPos, numElems);
+  printCudaUnsignedIntArr("PSums", d_partialSums, gridSize.x);
+
+
   gpu_exclusive_sum_scan_2<<<1, gridSize, gridSize.x*sizeof(unsigned int)>>>(d_partialSums, gridSize.x);
-  gpu_exclusive_sum_scan_3<<<gridSize, blockSize>>>(d_inputPos, d_partialSums, numElems);
+  printCudaUnsignedIntArr("Sums", d_partialSums, gridSize.x);
+
+  gpu_exclusive_sum_scan_3<<<gridSize, blockSize>>>(d_inputPos, d_partialSums, scatterStart, numElems);
   printCudaUnsignedIntArr("ADDRS", d_inputPos, printLen);
 
   unsigned int highestScatterAddr = 0;
@@ -205,7 +292,7 @@ unsigned int sort_helper(unsigned int bit,
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
   // scatter the input values to the correct places in the output values array
-  gpu_scatter<<<gridSize, blockSize>>>(d_inputVals, d_predicate, d_inputPos, d_outputVals, scatterStart, numElems);
+  gpu_scatter<<<gridSize, blockSize>>>(d_inputVals, d_predicate, d_inputPos, d_outputVals, numElems);
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   printCudaUnsignedIntArr("OUT  ", d_outputVals, printLen);
 
@@ -222,15 +309,20 @@ void sort_wrapper(unsigned int* const d_inputVals,
   printArrayIndices(numElems);
   printCudaUnsignedIntArr("VAL  ", d_inputVals, numElems);
 
-  for(unsigned int bit = 0; bit < sizeof(unsigned int) * 8; bit++)
+//  unsigned int bit = 0;
+//  for(unsigned int bit = 0; bit < sizeof(unsigned int) * 8; bit++)
+  for(unsigned int bit = 0; bit < 1; bit++)
+
   {
     if(bit & 1){
       // odd numbered bits copy intermediate results backward into the input buffer
       unsigned int highestZero = sort_helper(bit, 0, d_outputVals, d_outputPos, d_inputVals, 0, numElems);
-      sort_helper(bit, 1, d_outputVals, d_outputPos, d_inputVals, highestZero+1, numElems);
+      if(highestZero < numElems - 1)
+        sort_helper(bit, 1, d_outputVals, d_outputPos, d_inputVals, highestZero+1, numElems);
     }else{
       unsigned int highestZero = sort_helper(bit, 0, d_inputVals, d_inputPos, d_outputVals, 0, numElems);
-      sort_helper(bit, 1, d_inputVals, d_inputPos, d_outputVals, highestZero+1, numElems);
+      if(highestZero < numElems - 1)
+        sort_helper(bit, 1, d_inputVals, d_inputPos, d_outputVals, highestZero+1, numElems);
     }
   }
 
@@ -247,11 +339,12 @@ void your_sort(unsigned int* const d_inputVals,
                 size_t numElems)
 {
 
-//  numElems = 1024;
-//  unsigned int h_debugVals[numElems];
-//  for(int i = 0; i < numElems; i++) h_debugVals[i] = numElems-i-1;
-//  checkCudaErrors(cudaMemcpy(d_inputVals, h_debugVals, numElems * sizeof(unsigned int), cudaMemcpyHostToDevice));
+  numElems = NUMELEMS;
+  unsigned int h_debugVals[numElems];
+  for(int i = 0; i < numElems; i++) h_debugVals[i] = numElems-i-1;
+  checkCudaErrors(cudaMemcpy(d_inputVals, h_debugVals, numElems * sizeof(unsigned int), cudaMemcpyHostToDevice));
 
 
   sort_wrapper(d_inputVals, d_inputPos, d_outputVals, d_outputPos, numElems);
+  checkSorted(d_outputVals, numElems);
 }
