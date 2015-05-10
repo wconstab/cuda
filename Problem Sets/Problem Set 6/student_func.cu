@@ -69,18 +69,37 @@
 #include "utils.h"
 #include <thrust/host_vector.h>
 
-__global__ void mask_kern(uchar4* sourceImg, uchar4* masks, size_t numElem)
+__global__ void mask_kern(uchar4* sourceImg, uchar4* masks, size_t numRowsSource, size_t numColsSource)
 {
 
-//  int2 image_index_2d = make_int2( ( blockIdx.x * blockDim.x ) + threadIdx.x, ( blockIdx.y * blockDim.y ) + threadIdx.y );
   int  gTid = ( blockIdx.x * blockDim.x ) + threadIdx.x;
+  size_t numElem = numRowsSource * numColsSource;
+
   if(gTid < numElem){
-    masks[gTid].NON_WHITE = 255* (sourceImg[gTid].x != 255 || sourceImg[gTid].y != 255 || sourceImg[gTid].z != 255);
+    masks[gTid].NON_WHITE = sourceImg[gTid].x != 255 || sourceImg[gTid].y != 255 || sourceImg[gTid].z != 255;
   }
-
-
 }
+__global__ void mask_kern2(uchar4* sourceImg, uchar4* masks, int numRowsSource, int numColsSource)
+{
 
+  int  gTid = ( blockIdx.x * blockDim.x ) + threadIdx.x;
+  size_t numElem = numRowsSource * numColsSource;
+
+  if(gTid < numElem){
+    masks[gTid].INTERIOR = masks[gTid].NON_WHITE;
+    if(gTid - 1 >= 0 && masks[gTid-1].NON_WHITE == 0)  masks[gTid].INTERIOR = 0;
+    if(gTid + 1 < numElem && masks[gTid+1].NON_WHITE == 0)  masks[gTid].INTERIOR = 0;
+    if(gTid - numColsSource >= 0 && masks[gTid-numColsSource].NON_WHITE == 0)  masks[gTid].INTERIOR = 0;
+    if(gTid + numColsSource < numElem && masks[gTid+numColsSource].NON_WHITE == 0)  masks[gTid].INTERIOR = 0;
+
+    masks[gTid].BORDER = masks[gTid].NON_WHITE && !masks[gTid].INTERIOR;
+
+    // debug, visually
+//    masks[gTid].INTERIOR *= 255;
+//    masks[gTid].NON_WHITE *= 255;
+//    masks[gTid].BORDER *= 255;
+  }
+}
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
@@ -122,7 +141,9 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 
   const dim3 blockSize(256, 1, 1);
   const dim3 gridSize( (numElem + 1) / blockSize.x, 1, 1);
-  mask_kern<<<gridSize, blockSize>>>(d_sourceImg, d_masks, numElem);
+  mask_kern<<<gridSize, blockSize>>>(d_sourceImg, d_masks, numRowsSource, numColsSource);
+  mask_kern2<<<gridSize, blockSize>>>(d_sourceImg, d_masks, numRowsSource, numColsSource);
+
 
   // debug
   cudaMemcpy(h_blendedImg, d_masks, sizeof(uchar4) * numElem, cudaMemcpyDeviceToHost);
