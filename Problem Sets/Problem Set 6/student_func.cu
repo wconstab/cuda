@@ -12,10 +12,10 @@
    The basic ideas are as follows:
 
    1) Figure out the interior and border of the source image
-   2) Use the values of the border pixels in the destination image 
+   2) Use the values of the border pixels in the destination image
       as boundary conditions for solving a Poisson equation that tells
       us how to blend the images.
-   
+
       No pixels from the destination except pixels on the border
       are used to compute the match.
 
@@ -28,7 +28,7 @@
    until it stops changing.  If the problem was well-suited for the method
    then it will stop and where it stops will be the solution.
 
-   The Jacobi method is the simplest iterative method and converges slowly - 
+   The Jacobi method is the simplest iterative method and converges slowly -
    that is we need a lot of iterations to get to the answer, but it is the
    easiest method to write.
 
@@ -62,10 +62,25 @@
     In this assignment we will do 800 iterations.
    */
 
-
+#define NON_WHITE x
+#define INTERIOR y
+#define BORDER z
 
 #include "utils.h"
 #include <thrust/host_vector.h>
+
+__global__ void mask_kern(uchar4* sourceImg, uchar4* masks, size_t numElem)
+{
+
+//  int2 image_index_2d = make_int2( ( blockIdx.x * blockDim.x ) + threadIdx.x, ( blockIdx.y * blockDim.y ) + threadIdx.y );
+  int  gTid = ( blockIdx.x * blockDim.x ) + threadIdx.x;
+  if(gTid < numElem){
+    masks[gTid].NON_WHITE = 255* (sourceImg[gTid].x != 255 || sourceImg[gTid].y != 255 || sourceImg[gTid].z != 255);
+  }
+
+
+}
+
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
@@ -74,10 +89,51 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 {
 
   /* To Recap here are the steps you need to implement
-  
+
+     mask buffer
+     interior buffer
+     input 2x R, G, B float bufs for guesses
+
+
      1) Compute a mask of the pixels from the source image to be copied
         The pixels that shouldn't be copied are completely white, they
         have R=255, G=255, B=255.  Any other pixels SHOULD be copied.
+
+        > alloc 1 uchar4
+        > cp uchar4 from htod
+
+        > compute masks
+          -nonwhite mask != 255 (one mask, for r,g and b)
+          -interior mask
+            all 4 neighbors also in mask
+          -border mask
+            remaining pixels in nonwhite mask that aren't interior
+
+
+        */
+  size_t numElem = numRowsSource * numColsSource;
+  uchar4* d_sourceImg;
+  checkCudaErrors(cudaMalloc(&d_sourceImg,  sizeof(uchar4) * numElem));
+  cudaMemcpy(d_sourceImg, h_sourceImg, sizeof(uchar4) * numElem, cudaMemcpyHostToDevice);
+
+  uchar4* d_masks;
+  checkCudaErrors(cudaMalloc(&d_masks,  sizeof(uchar4) * numElem));
+  checkCudaErrors(cudaMemset(d_masks, 0, sizeof(uchar4) * numElem));
+
+  const dim3 blockSize(256, 1, 1);
+  const dim3 gridSize( (numElem + 1) / blockSize.x, 1, 1);
+  mask_kern<<<gridSize, blockSize>>>(d_sourceImg, d_masks, numElem);
+
+  // debug
+  cudaMemcpy(h_blendedImg, d_masks, sizeof(uchar4) * numElem, cudaMemcpyDeviceToHost);
+
+  /*
+        > alloc 3 (r,g,b) device float bufs x2 for guesses
+        > device extract r,g,b into (both?) bufs
+        > iterate jacobi func 800 times
+        > replace dest img interior pixels with rsult of jacobi
+          -- cast fp vals to uchar since they have been clamped already (in jacobi?)
+
 
      2) Compute the interior and border regions of the mask.  An interior
         pixel has all 4 neighbors also inside the mask.  A border pixel is
@@ -89,7 +145,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
         act as our guesses.  Initialize them to the respective color
         channel of the source image since that will act as our intial guess.
 
-     5) For each color channel perform the Jacobi iteration described 
+     5) For each color channel perform the Jacobi iteration described
         above 800 times.
 
      6) Create the output image by replacing all the interior pixels
