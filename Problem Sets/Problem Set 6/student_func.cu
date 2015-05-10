@@ -118,6 +118,19 @@ __global__ void extract_rgb_kern(uchar4* sourceImg, float* r, float* g, float* b
     b[gTid] = (float)sourceImg[gTid].z;
   }
 }
+
+__global__ void output_kern(uchar4* blendedImg, uchar4* masks, float* r, float* g, float* b, int numRowsSource, int numColsSource)
+{
+  int  gTid = ( blockIdx.x * blockDim.x ) + threadIdx.x;
+  size_t numElem = numRowsSource * numColsSource;
+
+  if(gTid < numElem && masks[gTid].INTERIOR){
+    blendedImg[gTid].x = (unsigned char)r[gTid];
+    blendedImg[gTid].y = (unsigned char)g[gTid];
+    blendedImg[gTid].z = (unsigned char)b[gTid];
+  }
+}
+
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
                 const uchar4* const h_destImg, //IN
@@ -194,17 +207,16 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
         Just cast the floating point values to unsigned chars since we have
         already made sure to clamp them to the correct range.
 
-      Since this is final assignment we provide little boilerplate code to
-      help you.  Notice that all the input/output pointers are HOST pointers.
 
-      You will have to allocate all of your own GPU memory and perform your own
-      memcopies to get data in and out of the GPU memory.
+*/
+  uchar4* d_blendedImg;
+  checkCudaErrors(cudaMalloc(&d_blendedImg,  sizeof(uchar4) * numElem));
+  cudaMemcpy(d_blendedImg, h_destImg, sizeof(uchar4) * numElem, cudaMemcpyHostToDevice);
 
-      Remember to wrap all of your calls with checkCudaErrors() to catch any
-      thing that might go wrong.  After each kernel call do:
+  output_kern<<<gridSize, blockSize>>>(d_blendedImg, d_masks, d_jacBuf[1][ch_R], d_jacBuf[1][ch_G], d_jacBuf[1][ch_B], numRowsSource, numColsSource);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+  cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numElem, cudaMemcpyDeviceToHost);
 
-      to catch any errors that happened while executing the kernel.
-  */
+
 }
