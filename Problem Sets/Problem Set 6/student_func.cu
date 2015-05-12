@@ -61,6 +61,7 @@
 
     In this assignment we will do 800 iterations.
    */
+#define NITER 800
 #define NBUF 2
 #define NCHAN 3
 #define ch_R 0
@@ -131,6 +132,92 @@ __global__ void output_kern(uchar4* blendedImg, uchar4* masks, float* r, float* 
   }
 }
 
+
+//ImageGuess_prev (Floating point)
+//ImageGuess_next (Floating point)
+//
+//DestinationImg
+//SourceImg
+
+//1) For every pixel p in the interior, compute two sums over the four neighboring pixels:
+//   Sum1: If the neighbor is in the interior then += ImageGuess_prev[neighbor]
+//          else if the neighbor in on the border then += DestinationImg[neighbor]
+//
+//   Sum2: += SourceImg[p] - SourceImg[neighbor]   (for all four neighbors)
+//
+//2) Calculate the new pixel value:
+//   float newVal= (Sum1 + Sum2) / 4.f  <------ Notice that the result is FLOATING POINT
+//   ImageGuess_next[p] = min(255, max(0, newVal)); //clamp to [0, 255]
+
+__device__ __forceinline__ unsigned char getChan(uchar4* buf, int chan){
+  switch(chan){
+  case 0:
+    return buf->x;
+  case 1:
+    return buf->y;
+  case 2:
+    return buf->z;
+  default:
+    return 0;
+  }
+}
+
+__device__ __forceinline__ float sum1Helper(int loc, int c, size_t numElem, uchar4* masks, float* prev[NCHAN], uchar4* destImg){
+  float sum1 = 0;
+  if( loc < numElem && loc >= 0){
+    if(masks[loc].INTERIOR){
+      sum1 = prev[c][loc];
+    }else{
+      sum1 = getChan(&destImg[loc], c);
+    }
+  }
+  return sum1;
+}
+
+__device__ __forceinline__ float sum2Helper(int loc, int c, size_t numElem, int numColsSource, uchar4* srcImg){
+  float sum2 = 0;
+    if( loc < numElem && loc >= 0){
+      sum2 += getChan(&srcImg[loc], c) - getChan(&srcImg[loc+1], c);
+      sum2 += getChan(&srcImg[loc], c) - getChan(&srcImg[loc-1], c);
+      sum2 += getChan(&srcImg[loc], c) - getChan(&srcImg[loc+numColsSource], c);
+      sum2 += getChan(&srcImg[loc], c) - getChan(&srcImg[loc-numColsSource], c);
+
+    }
+    return sum2;
+}
+
+__global__ void jacobi_kern
+(
+    uchar4* destImg,
+    uchar4* srcImg,
+    uchar4* masks,
+    float* prev[NCHAN],
+    float* next[NCHAN],
+    int numRowsSource, int numColsSource)
+{
+  int  gTid = ( blockIdx.x * blockDim.x ) + threadIdx.x;
+  size_t numElem = numRowsSource * numColsSource;
+
+  if(gTid < numElem && masks[gTid].INTERIOR){
+    for(int c = 0; c < NCHAN; c++){
+      float sum1 = 0, sum2 = 0;
+
+      sum1 += sum1Helper(gTid+1, c, numElem, masks, prev, destImg);
+      sum1 += sum1Helper(gTid-1, c, numElem, masks, prev, destImg);
+      sum1 += sum1Helper(gTid+numColsSource, c, numElem, masks, prev, destImg);
+      sum1 += sum1Helper(gTid-numColsSource, c, numElem, masks, prev, destImg);
+
+      sum2 += sum2Helper(gTid, c, numElem, numColsSource, srcImg);
+
+      float newVal= (sum1 + sum2) / 4.f;
+
+      next[c][gTid] = min(255., max(0., newVal));
+    }
+
+  }
+}
+
+
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
                 const uchar4* const h_destImg, //IN
@@ -152,6 +239,9 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   uchar4* d_sourceImg;
   checkCudaErrors(cudaMalloc(&d_sourceImg,  sizeof(uchar4) * numElem));
   cudaMemcpy(d_sourceImg, h_sourceImg, sizeof(uchar4) * numElem, cudaMemcpyHostToDevice);
+  uchar4* d_destImg;
+  checkCudaErrors(cudaMalloc(&d_destImg,  sizeof(uchar4) * numElem));
+  cudaMemcpy(d_destImg, h_destImg, sizeof(uchar4) * numElem, cudaMemcpyHostToDevice);
 
   uchar4* d_masks;
   checkCudaErrors(cudaMalloc(&d_masks,  sizeof(uchar4) * numElem));
@@ -185,35 +275,48 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 
 */
 
-  float* d_jacBuf[NBUF][NCHAN];
+  float* h_jacBuf[NBUF][NCHAN];
   for(int n = 0; n < NBUF; n++){
     for(int c = 0; c < NCHAN; c++){
-      checkCudaErrors(cudaMalloc(&d_jacBuf[n][c],  sizeof(float) * numElem));
+      checkCudaErrors(cudaMalloc(&h_jacBuf[n][c],  sizeof(float) * numElem));
     }
   }
 
-  extract_rgb_kern<<<gridSize, blockSize>>>(d_sourceImg, d_jacBuf[0][ch_R], d_jacBuf[0][ch_G], d_jacBuf[0][ch_B], numRowsSource, numColsSource);
+  extract_rgb_kern<<<gridSize, blockSize>>>(d_sourceImg, h_jacBuf[0][ch_R], h_jacBuf[0][ch_G], h_jacBuf[0][ch_B], numRowsSource, numColsSource);
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-  extract_rgb_kern<<<gridSize, blockSize>>>(d_sourceImg, d_jacBuf[1][ch_R], d_jacBuf[1][ch_G], d_jacBuf[1][ch_B], numRowsSource, numColsSource);
+  extract_rgb_kern<<<gridSize, blockSize>>>(d_sourceImg, h_jacBuf[1][ch_R], h_jacBuf[1][ch_G], h_jacBuf[1][ch_B], numRowsSource, numColsSource);
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-  /*
-     5) For each color channel perform the Jacobi iteration described
-        above 800 times.
 
-     6) Create the output image by replacing all the interior pixels
-        in the destination image with the result of the Jacobi iterations.
-        Just cast the floating point values to unsigned chars since we have
-        already made sure to clamp them to the correct range.
+// 5) For each color channel perform the Jacobi iteration described
+//    above 800 times.
+  float* d_jacBuf0;
+  float* d_jacBuf1;
+  checkCudaErrors(cudaMalloc((void**)&d_jacBuf0,  sizeof(float*) * NCHAN));
+  checkCudaErrors(cudaMalloc((void**)&d_jacBuf1,  sizeof(float*) * NCHAN));
+  cudaMemcpy(d_jacBuf0, (void*)h_jacBuf[0], sizeof(float*) * NCHAN, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_jacBuf1, (void*)h_jacBuf[1], sizeof(float*) * NCHAN, cudaMemcpyHostToDevice);
 
 
-*/
+  for(int i = 0; i < NITER/2; i++){
+    jacobi_kern<<<gridSize, blockSize>>>(d_destImg, d_sourceImg, d_masks, (float**)d_jacBuf0, (float**)d_jacBuf1, numRowsSource, numColsSource);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+    jacobi_kern<<<gridSize, blockSize>>>(d_destImg, d_sourceImg, d_masks, (float**)d_jacBuf1, (float**)d_jacBuf0, numRowsSource, numColsSource);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+  }
+// 6) Create the output image by replacing all the interior pixels
+//    in the destination image with the result of the Jacobi iterations.
+//    Just cast the floating point values to unsigned chars since we have
+//    already made sure to clamp them to the correct range.
+
+
+
   uchar4* d_blendedImg;
   checkCudaErrors(cudaMalloc(&d_blendedImg,  sizeof(uchar4) * numElem));
   cudaMemcpy(d_blendedImg, h_destImg, sizeof(uchar4) * numElem, cudaMemcpyHostToDevice);
 
-  output_kern<<<gridSize, blockSize>>>(d_blendedImg, d_masks, d_jacBuf[1][ch_R], d_jacBuf[1][ch_G], d_jacBuf[1][ch_B], numRowsSource, numColsSource);
+  output_kern<<<gridSize, blockSize>>>(d_blendedImg, d_masks, h_jacBuf[1][ch_R], h_jacBuf[1][ch_G], h_jacBuf[1][ch_B], numRowsSource, numColsSource);
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
   cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numElem, cudaMemcpyDeviceToHost);
