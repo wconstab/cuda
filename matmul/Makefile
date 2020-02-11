@@ -1,5 +1,7 @@
 run: matmul
 	LD_LIBRARY_PATH=/opt/intel/mkl/lib/intel64:$LD_LIBRARY_PATH ./matmul
+memcheck: matmul
+	LD_LIBRARY_PATH=/opt/intel/mkl/lib/intel64:$LD_LIBRARY_PATH  cuda-memcheck ./matmul
 dbg: matmul
 	LD_LIBRARY_PATH=/opt/intel/mkl/lib/intel64:$LD_LIBRARY_PATH  cuda-gdb ./matmul
 matmul: matmul.cu

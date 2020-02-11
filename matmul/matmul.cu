@@ -1,4 +1,3 @@
-
 #include <functional>
 #include <stdio.h>
 #include "mkl.h"
@@ -39,6 +38,8 @@ void BlockMatMul(const Matrix A, const Matrix B, Matrix C)
     d_C.width = C.width; d_C.height = C.height;
     size = C.width * C.height * sizeof(float);
     cudaMalloc(&d_C.elements, size);
+    if ( cudaSuccess != cudaGetLastError() )
+        printf( "Error! cuMalloc\n" );
 
     // Invoke kernel
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
@@ -46,13 +47,16 @@ void BlockMatMul(const Matrix A, const Matrix B, Matrix C)
     int shared = 2 * A.width * dimBlock.y * sizeof(float);
     int sh_A_offs = 0;
     int sh_B_offs = A.width * dimBlock.y;
-    printf("shared %d b_offs %d\n", shared, sh_B_offs);
     BlockMatMulKernel<<<dimGrid, dimBlock, shared>>>(d_A, d_B, d_C, sh_A_offs, sh_B_offs);
+    cudaDeviceSynchronize();
+    if ( cudaSuccess != cudaGetLastError() )
+        printf( "Error! Kernel\n" );
 
     // Read C from device memory
     cudaMemcpy(C.elements, d_C.elements, size,
                cudaMemcpyDeviceToHost);
-
+    if ( cudaSuccess != cudaGetLastError() )
+        printf( "Error! cudaMemcpy DtoH\n" );
     // Free device memory
     cudaFree(d_A.elements);
     cudaFree(d_B.elements);
@@ -105,44 +109,26 @@ __global__ void BlockMatMulKernel(Matrix A, Matrix B, Matrix C, int sh_A_offs, i
     float* shared_A = &s[sh_A_offs];
     float* shared_B = &s[sh_B_offs];
 
-    if(blockIdx.x == 0 and blockIdx.y == 0 and threadIdx.x == 0 and threadIdx.y == 0)
-    {
-        printf("shared_a 0x%p shared_b 0x%p\n", shared_A, shared_B);
-    }
-
-    int max_idx = blockDim.x * blockDim.y;
-    int a_elts = A.width * A.height;
-    int iters = a_elts / max_idx;
-    int idx;
-    int my_pos = threadIdx.x + threadIdx.y * blockDim.x;
-    for(int i = 0; i < iters; i++)
-    {
-        idx = my_pos + i * max_idx;
-        if(idx < a_elts)
-        {
-            shared_A[idx] = A.elements[idx];
-        }
-    }
-    __syncthreads();
-
+    int iters = 2;
+    int b_idx;
+    int a_idx;
     int sh_idx;
     for(int iter = 0; iter < iters; iter++)
     {
-        idx = (iter * blockDim.y * B.width)
-            + (threadIdx.y * B.width)
-            + threadIdx.x;
+        sh_idx = (threadIdx.y * A.width) + (iter * blockDim.x) + threadIdx.x;
+        a_idx = (blockIdx.y * blockDim.y * A.width) + sh_idx;
+        shared_A[sh_idx] = A.elements[a_idx];
+
+        b_idx = (iter * blockDim.y * B.width)
+              + (threadIdx.y * B.width)
+              + (blockIdx.x * blockDim.x)
+              + threadIdx.x;
         sh_idx = ((blockDim.x - 1 - threadIdx.x) * B.height)
                + (iter * blockDim.y)
                + threadIdx.y;
-        //if(blockIdx.x == 0 and blockIdx.y == 0) 
-        //{
-        //    printf("shared_B[%d] = B.elements[%d]\n", sh_idx, idx);
-        //    shared_B[sh_idx] = B.elements[idx];
-        //}
-        shared_B[sh_idx] = 0;
+        shared_B[sh_idx] = B.elements[b_idx];
     }
     __syncthreads();
-
 
     // Each thread computes one element of C
     // by accumulating results into Cvalue
@@ -150,9 +136,8 @@ __global__ void BlockMatMulKernel(Matrix A, Matrix B, Matrix C, int sh_A_offs, i
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     for (int e = 0; e < A.width; ++e)
-        Cvalue += shared_A[row * A.width + e]
-                * B.elements[e * B.width + col];
-//                * shared_B[row * A.width + e];
+        Cvalue += shared_A[threadIdx.y * A.width + e]
+                * shared_B[((blockDim.x - 1 - threadIdx.x) * A.width) + e];
     C.elements[row * C.width + col] = Cvalue;
 }
 // Matrix multiplication kernel called by MatMul()
@@ -164,8 +149,8 @@ __global__ void MatMulKernel(Matrix A, Matrix B, Matrix C)
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     for (int e = 0; e < A.width; ++e)
-        Cvalue += A.elements[row * A.width + e]
-                * B.elements[e * B.width + col];
+        Cvalue += A.elements[threadIdx.y * A.width + e]
+                * B.elements[threadIdx.y * A.width + e];
     C.elements[row * C.width + col] = Cvalue;
 }
 
@@ -252,7 +237,7 @@ int main(int argc, char ** argv)
         printf("FAIL: error = %f\n", error);
     }
 
-    // print_mat(ref_C);
+    //print_mat(ref_C);
 
 	mkl_free(A.elements);
 	mkl_free(B.elements);
