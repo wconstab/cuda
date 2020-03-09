@@ -58,7 +58,7 @@ float compare_mat(Matrix A, Matrix Ref)
 int main(int argc, char ** argv)
 {
     Matrix A, B, C;
-    int mat_dim = 512;
+    int mat_dim = 1024;
 	A.height = mat_dim;
 	A.width = mat_dim;
 	B.width = mat_dim;

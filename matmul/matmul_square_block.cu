@@ -4,45 +4,63 @@
 #include "matrix.h"
 #include "kernel_matmul.hpp"
 
+#define BLOCK_SIZE 16
+
 /**
-    Cooperate to load relevant slice of A, B into shmem before multiplying
+    Load only square blocks of A, B and accumultate into shared block of C.
+
 */
-__global__ void BlockMatMulKernel(Matrix A, Matrix B, Matrix C, int sh_A_offs, int sh_B_offs)
+
+int ceil_div(int a, int b) {
+    if (a % b == 0) {
+        return a / b;
+    } else {
+        return (a / b) + 1;
+    }
+}
+
+__device__ int dev_ceil_div(int a, int b) {
+    if (a % b == 0) {
+        return a / b;
+    } else {
+        return (a / b) + 1;
+    }
+}
+
+__device__ float* block_offset(float* base, int width, int y_block, int x_block) {
+    return base + (y_block * width * BLOCK_SIZE) + (x_block * BLOCK_SIZE);
+}
+
+__global__ void BlockMatMulKernel(Matrix A, Matrix B, Matrix C, int sh_A_offs, int sh_B_offs, int sh_C_offs)
 {
     extern __shared__ float s[];
-    float* shared_A = &s[sh_A_offs];
-    float* shared_B = &s[sh_B_offs];
+    float* sh_A = &s[sh_A_offs];
+    float* sh_B = &s[sh_B_offs];
+    float* sh_C = &s[sh_C_offs];
+    int sh_idx = threadIdx.y * BLOCK_SIZE + threadIdx.x;
+    float *A_ptr, *B_ptr, *C_ptr;
+    C_ptr = block_offset(C.elements, C.width, blockIdx.y, blockIdx.x);
 
-    int iters = 2;
-    int b_idx;
-    int a_idx;
-    int sh_idx;
-    for(int iter = 0; iter < iters; iter++)
-    {
-        sh_idx = (threadIdx.y * A.width) + (iter * blockDim.x) + threadIdx.x;
-        a_idx = (blockIdx.y * blockDim.y * A.width) + sh_idx;
-        shared_A[sh_idx] = A.elements[a_idx];
+    for(int i = 0; i < dev_ceil_div(A.width, BLOCK_SIZE); i++){
+        // compute offset into A, B for this iteration
+        A_ptr = block_offset(A.elements, A.width, blockIdx.y, i);
+        B_ptr = block_offset(B.elements, B.width, i, blockIdx.x);
 
-        b_idx = (iter * blockDim.y * B.width)
-              + (threadIdx.y * B.width)
-              + (blockIdx.x * blockDim.x)
-              + threadIdx.x;
-        sh_idx = ((blockDim.x - 1 - threadIdx.x) * B.height)
-               + (iter * blockDim.y)
-               + threadIdx.y;
-        shared_B[sh_idx] = B.elements[b_idx];
+        // Load my element of A, B blocks
+        sh_A[sh_idx] = A_ptr[threadIdx.y * A.width + threadIdx.x];
+        sh_B[sh_idx] = B_ptr[threadIdx.y * B.width + threadIdx.x];
+        __syncthreads();
+
+        // Accumulate into my C block
+        for(int k = 0; k < BLOCK_SIZE; k++) {
+            sh_C[sh_idx] += sh_A[threadIdx.y * BLOCK_SIZE + k] * sh_B[k * BLOCK_SIZE + threadIdx.x];
+        }
+        __syncthreads();
     }
-    __syncthreads();
 
-    // Each thread computes one element of C
-    // by accumulating results into Cvalue
-    float Cvalue = 0;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int e = 0; e < A.width; ++e)
-        Cvalue += shared_A[threadIdx.y * A.width + e]
-                * shared_B[((blockDim.x - 1 - threadIdx.x) * A.width) + e];
-    C.elements[row * C.width + col] = Cvalue;
+    // write my C block back
+    C_ptr[threadIdx.y * C.width + threadIdx.x] = sh_C[sh_idx];
+
 }
 
 void BlockMatMul(const Matrix A, const Matrix B, Matrix C)
@@ -71,11 +89,14 @@ void BlockMatMul(const Matrix A, const Matrix B, Matrix C)
 
     // Invoke kernel
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dimGrid(B.width / dimBlock.x, A.height / dimBlock.y);
-    int shared = 2 * A.width * dimBlock.y * sizeof(float);
+    int grid_x = ceil_div(B.width, BLOCK_SIZE);
+    int grid_y = ceil_div(A.height, BLOCK_SIZE);
+    dim3 dimGrid(grid_x, grid_y);
+    int shared = 3 * dimBlock.x * dimBlock.y * sizeof(float);
     int sh_A_offs = 0;
-    int sh_B_offs = A.width * dimBlock.y;
-    BlockMatMulKernel<<<dimGrid, dimBlock, shared>>>(d_A, d_B, d_C, sh_A_offs, sh_B_offs);
+    int sh_B_offs = dimBlock.x * dimBlock.y;
+    int sh_C_offs = 2 * dimBlock.x * dimBlock.y;
+    BlockMatMulKernel<<<dimGrid, dimBlock, shared>>>(d_A, d_B, d_C, sh_A_offs, sh_B_offs, sh_C_offs);
     cudaDeviceSynchronize();
     if ( cudaSuccess != cudaGetLastError() )
         printf( "Error! Kernel\n" );

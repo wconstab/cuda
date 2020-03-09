@@ -4,6 +4,8 @@
 #include "matrix.h"
 #include "kernel_matmul.hpp"
 
+#define BLOCK_SIZE 16
+
 // Matrix multiplication kernel called by MatMul()
 __global__ void MatMulKernel(Matrix A, Matrix B, Matrix C)
 {
