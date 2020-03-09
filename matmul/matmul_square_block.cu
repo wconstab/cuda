@@ -46,20 +46,25 @@ __global__ void BlockMatMulKernel(Matrix A, Matrix B, Matrix C, int sh_A_offs, i
         A_ptr = block_offset(A.elements, A.width, blockIdx.y, i);
         B_ptr = block_offset(B.elements, B.width, i, blockIdx.x);
 
-        // Load my element of A, B blocks
-        sh_A[sh_idx] = A_ptr[threadIdx.y * A.width + threadIdx.x];
-        sh_B[sh_idx] = B_ptr[threadIdx.y * B.width + threadIdx.x];
+        // Load my element of A, B blocks if in bounds
+        if(&A_ptr[threadIdx.y * A.width + threadIdx.x] < &A_ptr[A.width * A.height])
+            sh_A[sh_idx] = A_ptr[threadIdx.y * A.width + threadIdx.x];
+        if(&B_ptr[threadIdx.y * B.width + threadIdx.x] < &B_ptr[B.width * B.height])
+            sh_B[sh_idx] = B_ptr[threadIdx.y * B.width + threadIdx.x];
         __syncthreads();
 
         // Accumulate into my C block
+        // TODO: don't loop out of bounds? or just don't do anything if oob
         for(int k = 0; k < BLOCK_SIZE; k++) {
             sh_C[sh_idx] += sh_A[threadIdx.y * BLOCK_SIZE + k] * sh_B[k * BLOCK_SIZE + threadIdx.x];
         }
         __syncthreads();
     }
 
-    // write my C block back
-    C_ptr[threadIdx.y * C.width + threadIdx.x] = sh_C[sh_idx];
+    // write my C block back if not out of bounds
+    if(&C_ptr[threadIdx.y * C.width + threadIdx.x] < &C_ptr[C.width * C.height]) {
+        C_ptr[threadIdx.y * C.width + threadIdx.x] = sh_C[sh_idx];
+    }
 
 }
 
